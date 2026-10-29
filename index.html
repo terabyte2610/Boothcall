@@ -190,7 +190,7 @@
       <label class="field">이름 (선택) <input id="joinName" placeholder="예: 민지의 리듬게임"></label>
     </div>
     <div class="row">
-      <label class="field">간식 획득 조건 (선택, 호출 버튼 밑에 작게 보여요) <input id="joinStamp" maxlength="60" placeholder="예: 5000점 이상"></label>
+      <label class="field">클리어 조건 (선택, 호출 버튼 밑에 작게 보여요) <input id="joinStamp" maxlength="60" placeholder="예: 5000점 이상"></label>
     </div>
     <p class="muted" style="margin:12px 0 6px">아래 배치도에서 이 노트북 자리를 눌러도 돼요.</p>
     <div class="map pick" id="pickMap"></div>
@@ -271,7 +271,7 @@
     const ack = { topic, title: '✅ ' + name + ' 응답', message: '휴대폰에서 응답했어요', tags: ['ack', 'b-' + booth], priority: 1 };
     return {
       title: '🔔 ' + name + ' 호출',
-      message: name + '에서 부원을 부르고 있어요!' + (stamp ? ' (간식 획득 조건: ' + stamp + ')' : ''),
+      message: name + '에서 부원을 부르고 있어요!' + (stamp ? ' (클리어 조건: ' + stamp + ')' : ''),
       tags: ['call', 'b-' + booth], priority: 5,
       actions: [{ action: 'http', label: '내가 갈게', url: NTFY + '/', method: 'POST', body: JSON.stringify(ack), clear: true }],
     };
@@ -349,14 +349,14 @@
     const root = $('booth'), btn = $('callBtn'), status = $('boothStatus'), cancel = $('cancelBtn');
     let state = 'idle', lastPress = 0, comingTimer = 0;
 
-    // 간식 획득 조건: 버튼 밑 작은 글씨. 눌러서 고치고, 이 노트북에 기억한다(참가할 때 &stamp=로 줄 수도 있다).
+    // 클리어 조건: 버튼 밑 작은 글씨. 눌러서 고치고, 이 노트북에 기억한다(참가할 때 &stamp=로 줄 수도 있다).
     const stampKey = 'boothCallStamp:' + topic + ':' + booth;
     let stamp = P.get('stamp') || '';
     try { const v = localStorage.getItem(stampKey); if (v !== null) stamp = v; } catch (e) {}
     const stampBox = $('stamp'), stampText = $('stampText'), stampIn = $('stampIn');
     function showStamp() {
       stampBox.classList.toggle('empty', !stamp);
-      stampText.textContent = stamp ? '🍪 간식 획득 조건: ' + stamp : '＋ 간식 획득 조건 적기';
+      stampText.textContent = stamp ? '🏁 클리어 조건: ' + stamp : '＋ 클리어 조건 적기';
       stampText.classList.remove('hidden'); stampIn.classList.add('hidden');
     }
     function editStamp() {
@@ -476,7 +476,7 @@
       // 배치도: 부르는 자리는 빨갛게 깜빡이고, 누르면 "내가 갈게"
       drawMap($('staffMap'), (id, el, sub) => {
         const b = booths.get(id);
-        el.title = b.name + (b.stamp ? ' · 간식 획득 조건: ' + b.stamp : '');
+        el.title = b.name + (b.stamp ? ' · 클리어 조건: ' + b.stamp : '');
         if (b.state === 'calling') { el.classList.add('calling'); sub.textContent = ago(b.since); }
         else if (b.state === 'coming') { el.classList.add('coming'); sub.textContent = b.note.replace(/ 가는 중$/, '') || '응답함'; }
       }, ack);
@@ -496,7 +496,7 @@
         st.textContent = b.state === 'calling' ? '🔔 호출 중 · ' + ago(b.since)
           : b.state === 'coming' ? '✅ ' + b.note + ' · ' + ago(b.since) : '대기';
         card.append(nm, st);
-        if (b.stamp) { const sp = document.createElement('div'); sp.className = 'stamp-note'; sp.textContent = '🍪 간식 획득 조건: ' + b.stamp; card.append(sp); }
+        if (b.stamp) { const sp = document.createElement('div'); sp.className = 'stamp-note'; sp.textContent = '🏁 클리어 조건: ' + b.stamp; card.append(sp); }
         if (b.state === 'calling') {
           const btn = document.createElement('button');
           btn.className = 'ackBtn'; btn.type = 'button'; btn.textContent = '내가 갈게';
@@ -521,7 +521,7 @@
       booths.set(m.booth, b);
       if (m.kind === 'call') {
         b.name = m.title.replace(/^🔔 /, '').replace(/ 호출$/, '') || b.name;
-        const sm = m.message.match(/\((?:간식 획득|도장) 조건: (.*)\)$/);
+        const sm = m.message.match(/\((?:클리어|간식 획득|도장) 조건: (.*)\)$/);
         b.stamp = sm ? sm[1] : '';
         if (b.state !== 'calling') b.since = m.time;
         b.state = 'calling';
