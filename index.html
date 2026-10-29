@@ -55,6 +55,10 @@
   }
   #callBtn:active { transform: translateY(8px); box-shadow: 0 2px 0 var(--call-dark), 0 8px 20px rgba(229, 72, 77, .3); }
   #callBtn small { display: block; font-size: .42em; font-weight: 600; opacity: .9; margin-top: 6px; }
+  #booth .stamp { font-size: 15px; max-width: min(90vw, 440px); }
+  #booth .stamp span { cursor: text; border-bottom: 1px dashed var(--line); padding: 2px 4px; }
+  #booth .stamp.empty span { color: var(--muted); }
+  #booth .stamp input { width: min(80vw, 320px); text-align: center; padding: 6px 10px; font-size: 15px; }
   #booth .status { font-size: 24px; font-weight: 700; min-height: 1.4em; }
   #booth .status.wait { color: var(--wait); }
   #booth .status.ok { color: var(--ok); }
@@ -67,10 +71,13 @@
   /* 게임 위에 작게 띄운 창 */
   /* 작은 창은 크기를 마음대로 줄일 수 있으니 버튼 하나가 창 전체를 채운다(잘리지 않게). */
   body.mini { overflow: hidden; }
-  body.mini #booth { min-height: 0; height: 100vh; padding: 6px; gap: 0; }
+  body.mini #booth { min-height: 0; height: 100vh; padding: 6px; gap: 3px; align-items: stretch; }
+  body.mini #booth .stamp { flex: none; font-size: clamp(10px, 9vh, 14px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; text-align: center; }
+  body.mini #booth .stamp span { border: 0; padding: 0; }
+  body.mini #booth .stamp.empty { display: none; }
   body.mini #booth .label, body.mini #booth .status, body.mini #booth .tools, body.mini .net { display: none !important; }
   body.mini #callBtn {
-    width: 100%; height: 100%; aspect-ratio: auto; border-radius: 14px;
+    width: 100%; height: auto; flex: 1 1 auto; min-height: 0; aspect-ratio: auto; border-radius: 14px;
     background: var(--call); box-shadow: inset 0 -5px 0 var(--call-dark);
     font-size: clamp(16px, min(14vw, 34vh), 64px);
   }
@@ -90,6 +97,7 @@
   .booth-card { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 150px; }
   .booth-card .name { font-size: 20px; font-weight: 800; }
   .booth-card .state { font-size: 16px; color: var(--muted); }
+  .booth-card .stamp-note { font-size: 14px; color: var(--ink); }
   .booth-card .ackBtn { margin-top: auto; border: 0; border-radius: 10px; padding: 12px; font-size: 17px; font-weight: 700; background: var(--ok); color: #fff; }
   .booth-card.calling { border-color: var(--call); background: color-mix(in srgb, var(--call) 12%, var(--card)); animation: flash 1s steps(2) infinite; }
   .booth-card.calling .state { color: var(--call); font-weight: 700; font-size: 18px; }
@@ -147,6 +155,7 @@
 <main id="booth" class="hidden">
   <div class="label" id="boothLabel"></div>
   <button id="callBtn" type="button">부원 호출<small>눌러서 부르기</small></button>
+  <div class="stamp empty" id="stamp"><span id="stampText" tabindex="0" title="눌러서 고치기"></span><input id="stampIn" class="hidden" maxlength="60" placeholder="예: 5000점 이상 · 보스 클리어"></div>
   <div class="status" id="boothStatus" aria-live="polite"></div>
   <div class="tools">
     <button class="btn hidden" id="cancelBtn" type="button">호출 취소</button>
@@ -179,6 +188,9 @@
     <div class="row">
       <label class="field num">자리 번호 <input id="joinNum" type="number" min="1" max="99" value="1"></label>
       <label class="field">이름 (선택) <input id="joinName" placeholder="예: 민지의 리듬게임"></label>
+    </div>
+    <div class="row">
+      <label class="field">도장 조건 (선택, 호출 버튼 밑에 작게 보여요) <input id="joinStamp" maxlength="60" placeholder="예: 5000점 이상"></label>
     </div>
     <p class="muted" style="margin:12px 0 6px">아래 배치도에서 이 노트북 자리를 눌러도 돼요.</p>
     <div class="map pick" id="pickMap"></div>
@@ -254,12 +266,12 @@
     };
   }
 
-  function callMsg(booth, name) {
+  function callMsg(booth, name, stamp) {
     // 휴대폰 알림의 [내가 갈게] 버튼이 그대로 응답 메시지를 보낸다.
     const ack = { topic, title: '✅ ' + name + ' 응답', message: '휴대폰에서 응답했어요', tags: ['ack', 'b-' + booth], priority: 1 };
     return {
       title: '🔔 ' + name + ' 호출',
-      message: name + '에서 부원을 부르고 있어요!',
+      message: name + '에서 부원을 부르고 있어요!' + (stamp ? ' (도장 조건: ' + stamp + ')' : ''),
       tags: ['call', 'b-' + booth], priority: 5,
       actions: [{ action: 'http', label: '내가 갈게', url: NTFY + '/', method: 'POST', body: JSON.stringify(ack), clear: true }],
     };
@@ -337,6 +349,33 @@
     const root = $('booth'), btn = $('callBtn'), status = $('boothStatus'), cancel = $('cancelBtn');
     let state = 'idle', lastPress = 0, comingTimer = 0;
 
+    // 도장 조건: 버튼 밑 작은 글씨. 눌러서 고치고, 이 노트북에 기억한다(참가할 때 &stamp=로 줄 수도 있다).
+    const stampKey = 'boothCallStamp:' + topic + ':' + booth;
+    let stamp = P.get('stamp') || '';
+    try { const v = localStorage.getItem(stampKey); if (v !== null) stamp = v; } catch (e) {}
+    const stampBox = $('stamp'), stampText = $('stampText'), stampIn = $('stampIn');
+    function showStamp() {
+      stampBox.classList.toggle('empty', !stamp);
+      stampText.textContent = stamp ? '🏷️ 도장 조건: ' + stamp : '＋ 도장 조건 적기';
+      stampText.classList.remove('hidden'); stampIn.classList.add('hidden');
+    }
+    function editStamp() {
+      stampIn.value = stamp;
+      stampText.classList.add('hidden'); stampIn.classList.remove('hidden');
+      stampIn.focus();
+    }
+    function saveStamp() {
+      if (stampIn.classList.contains('hidden')) return;
+      stamp = stampIn.value.trim();
+      try { localStorage.setItem(stampKey, stamp); } catch (e) {}
+      showStamp();
+    }
+    stampText.addEventListener('click', editStamp);
+    stampText.addEventListener('keydown', (e) => { if (e.key === 'Enter') editStamp(); });
+    stampIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveStamp(); if (e.key === 'Escape') showStamp(); });
+    stampIn.addEventListener('blur', saveStamp);
+    showStamp();
+
     function show(s, text) {
       state = s;
       root.classList.toggle('waiting', s === 'waiting');
@@ -357,7 +396,7 @@
       lastPress = Date.now();
       show('waiting', '부원을 부르는 중…');
       try {
-        await publish(callMsg(booth, name));
+        await publish(callMsg(booth, name, stamp));
         if (state === 'waiting') status.textContent = '호출했어요! 부원이 곧 와요';
       } catch (err) {
         lastPress = 0;
@@ -437,7 +476,7 @@
       // 배치도: 부르는 자리는 빨갛게 깜빡이고, 누르면 "내가 갈게"
       drawMap($('staffMap'), (id, el, sub) => {
         const b = booths.get(id);
-        el.title = b.name;
+        el.title = b.name + (b.stamp ? ' · 도장 조건: ' + b.stamp : '');
         if (b.state === 'calling') { el.classList.add('calling'); sub.textContent = ago(b.since); }
         else if (b.state === 'coming') { el.classList.add('coming'); sub.textContent = b.note.replace(/ 가는 중$/, '') || '응답함'; }
       }, ack);
@@ -457,6 +496,7 @@
         st.textContent = b.state === 'calling' ? '🔔 호출 중 · ' + ago(b.since)
           : b.state === 'coming' ? '✅ ' + b.note + ' · ' + ago(b.since) : '대기';
         card.append(nm, st);
+        if (b.stamp) { const sp = document.createElement('div'); sp.className = 'stamp-note'; sp.textContent = '🏷️ 도장 조건: ' + b.stamp; card.append(sp); }
         if (b.state === 'calling') {
           const btn = document.createElement('button');
           btn.className = 'ackBtn'; btn.type = 'button'; btn.textContent = '내가 갈게';
@@ -481,6 +521,8 @@
       booths.set(m.booth, b);
       if (m.kind === 'call') {
         b.name = m.title.replace(/^🔔 /, '').replace(/ 호출$/, '') || b.name;
+        const sm = m.message.match(/\(도장 조건: (.*)\)$/);
+        b.stamp = sm ? sm[1] : '';
         if (b.state !== 'calling') b.since = m.time;
         b.state = 'calling';
         // 지난 기록을 다시 받는 동안에는 울리지 않는다.
@@ -561,21 +603,22 @@
     });
 
     // 참가하기: 채널 이름 + 번호만으로 이 노트북의 호출 버튼(또는 현황판)으로 간다.
-    const joinTopic = $('joinTopic'), joinNum = $('joinNum'), joinName = $('joinName'), joinMsg = $('joinMsg');
+    const joinTopic = $('joinTopic'), joinNum = $('joinNum'), joinName = $('joinName'), joinStamp = $('joinStamp'), joinMsg = $('joinMsg');
     let last = {};
     try { last = JSON.parse(localStorage.getItem('boothCallJoin') || '{}'); } catch (e) {}
     joinTopic.value = topic || last.topic || '';
     joinNum.value = last.num || 1;
     joinName.value = last.name || '';
+    joinStamp.value = last.stamp || '';
     if (!topic && last.topic) joinMsg.textContent = '지난번 참가 정보를 채워 뒀어요.';
     function join(staff) {
       const t = joinTopic.value.trim().replace(/[^A-Za-z0-9_-]/g, '');
       if (!t) { joinMsg.textContent = '⚠️ 채널 이름을 입력해 주세요.'; joinTopic.focus(); return; }
       const n = Math.min(99, Math.max(1, parseInt(joinNum.value, 10) || 1));
-      const nm = joinName.value.trim();
-      try { localStorage.setItem('boothCallJoin', JSON.stringify({ topic: t, num: n, name: nm })); } catch (e) {}
+      const nm = joinName.value.trim(), sp = joinStamp.value.trim();
+      try { localStorage.setItem('boothCallJoin', JSON.stringify({ topic: t, num: n, name: nm, stamp: sp })); } catch (e) {}
       location.href = staff ? base + '?t=' + t + '&staff=1'
-        : base + '?t=' + t + '&booth=' + n + (nm ? '&name=' + encodeURIComponent(nm) : '');
+        : base + '?t=' + t + '&booth=' + n + (nm ? '&name=' + encodeURIComponent(nm) : '') + (sp ? '&stamp=' + encodeURIComponent(sp) : '');
     }
     const drawPick = () => drawMap($('pickMap'), (id, el) => { if (id === String(joinNum.value)) el.classList.add('picked'); },
       (id) => { joinNum.value = id; drawPick(); });
@@ -583,7 +626,7 @@
     drawPick();
     $('joinBooth').addEventListener('click', () => join(false));
     $('joinStaff').addEventListener('click', () => join(true));
-    for (const el of [joinTopic, joinNum, joinName]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(false); });
+    for (const el of [joinTopic, joinNum, joinName, joinStamp]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(false); });
     if (topic) joinNum.select();
     topicIn.addEventListener('input', update);
     namesIn.addEventListener('input', update);
