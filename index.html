@@ -65,13 +65,21 @@
   #booth .tools { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 
   /* 게임 위에 작게 띄운 창 */
-  body.mini #booth { gap: 10px; padding: 10px; }
-  body.mini #booth .label { font-size: 14px; }
-  body.mini #callBtn { width: 130px; font-size: 22px; box-shadow: 0 6px 0 var(--call-dark); }
-  body.mini #booth.coming #callBtn { box-shadow: 0 6px 0 #137a40; }
-  body.mini #callBtn small { display: none; }
-  body.mini #booth .status { font-size: 15px; }
-  body.mini #booth .tools .full-only, body.mini .net { display: none; }
+  /* 작은 창은 크기를 마음대로 줄일 수 있으니 버튼 하나가 창 전체를 채운다(잘리지 않게). */
+  body.mini { overflow: hidden; }
+  body.mini #booth { min-height: 0; height: 100vh; padding: 6px; gap: 0; }
+  body.mini #booth .label, body.mini #booth .status, body.mini #booth .tools, body.mini .net { display: none !important; }
+  body.mini #callBtn {
+    width: 100%; height: 100%; aspect-ratio: auto; border-radius: 14px;
+    background: var(--call); box-shadow: inset 0 -5px 0 var(--call-dark);
+    font-size: clamp(16px, min(14vw, 34vh), 64px);
+  }
+  body.mini #booth.coming #callBtn { background: var(--ok); box-shadow: inset 0 -5px 0 #137a40; }
+  body.mini #booth.waiting #callBtn { animation: blink 1.2s ease-in-out infinite; }
+  body.mini #callBtn:active { transform: none; filter: brightness(.9); }
+  body.mini #callBtn small { font-size: clamp(11px, min(5vw, 12vh), 22px); }
+  @media (max-height: 110px) { body.mini #callBtn small { display: none; } }
+  @keyframes blink { 50% { filter: brightness(1.25); } }
 
   /* ---------- 부원: 호출 현황판 ---------- */
   #staff { max-width: 1100px; margin: 0 auto; padding: 40px 16px 40px; }
@@ -328,14 +336,14 @@
     $('floatBtn').addEventListener('click', async () => {
       unlockAudio();
       if ('documentPictureInPicture' in window) {
-        const w = await documentPictureInPicture.requestWindow({ width: 220, height: 250 });
+        const w = await documentPictureInPicture.requestWindow({ width: 260, height: 160 });
         for (const s of document.querySelectorAll('style')) w.document.head.append(s.cloneNode(true));
         w.document.title = document.title;
         w.document.body.classList.add('mini');
         w.document.body.append(root);
         w.addEventListener('pagehide', () => document.body.append(root));
       } else {
-        window.open(location.href + '&mini=1', 'booth-call-' + booth, 'width=240,height=290');
+        window.open(location.href + '&mini=1', 'booth-call-' + booth, 'width=280,height=200');
       }
     });
   }
