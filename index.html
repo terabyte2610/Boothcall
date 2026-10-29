@@ -95,6 +95,23 @@
   .booth-card.calling .state { color: var(--call); font-weight: 700; font-size: 18px; }
   .booth-card.coming .state { color: var(--ok); font-weight: 600; }
   @keyframes flash { 50% { border-color: var(--line); } }
+  /* 자리 배치도 */
+  .map { display: flex; flex-direction: column; gap: 14px; margin-bottom: 22px; }
+  .map-row { display: grid; grid-template-columns: 5fr 3fr; gap: 14px; align-items: stretch; }
+  .tbl { background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 8px 10px 10px; }
+  .tbl-label { font-size: 13px; color: var(--muted); font-weight: 700; margin: 0 0 6px 2px; }
+  .seats { display: flex; gap: 8px; }
+  .seat { flex: 1; min-width: 0; min-height: 66px; border: 2px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink);
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 4px 2px; }
+  .seat b { font-size: 22px; line-height: 1; }
+  .seat span { font-size: 11px; line-height: 1.2; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seat.calling { background: var(--call); border-color: var(--call-dark); color: #fff; animation: seatflash 1s steps(2) infinite; cursor: pointer; }
+  .seat.coming { background: var(--ok); border-color: #137a40; color: #fff; }
+  .seat.picked { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+  .map.pick .seat { cursor: pointer; min-height: 44px; }
+  .map.pick .seat b { font-size: 17px; }
+  @keyframes seatflash { 50% { background: #ff8a8e; } }
+  @media (max-width: 640px) { .map-row { grid-template-columns: 1fr; } .seat b { font-size: 18px; } }
   #log { margin-top: 26px; font-size: 14px; }
   #log h2 { font-size: 16px; }
   #log ol { list-style: none; padding: 0; margin: 0; }
@@ -144,6 +161,8 @@
     <label class="muted">내 이름 <input id="staffName" placeholder="예: 민수" style="width:140px"></label>
   </header>
   <button id="soundGate" type="button">🔊 눌러서 알림 소리 켜기</button>
+  <div class="map" id="staffMap"></div>
+  <h2 style="font-size:16px;margin:0 0 10px">지금 호출</h2>
   <div id="grid"></div>
   <section id="log"><h2>기록</h2><ol id="logList"></ol></section>
 </main>
@@ -158,9 +177,11 @@
     <p class="muted">대표 노트북에서 받은 <b>채널 이름</b>을 넣고 이 노트북의 번호를 고르세요.</p>
     <label class="field">채널 이름 <input id="joinTopic" placeholder="예: booth-x7k2q9" spellcheck="false" autocapitalize="off"></label>
     <div class="row">
-      <label class="field num">번호 <input id="joinNum" type="number" min="1" max="99" value="1"></label>
+      <label class="field num">자리 번호 <input id="joinNum" type="number" min="1" max="99" value="1"></label>
       <label class="field">이름 (선택) <input id="joinName" placeholder="예: 민지의 리듬게임"></label>
     </div>
+    <p class="muted" style="margin:12px 0 6px">아래 배치도에서 이 노트북 자리를 눌러도 돼요.</p>
+    <div class="map pick" id="pickMap"></div>
     <div class="row">
       <button class="btn primary big" id="joinBooth" type="button">🔔 호출 버튼으로 참가</button>
       <button class="btn big" id="joinStaff" type="button">📣 현황판으로 참가</button>
@@ -270,6 +291,40 @@
   const hhmm = (ms) => new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? s + '초 전' : Math.floor(s / 60) + '분 전'; };
 
+  // ---------- 자리 배치 ----------
+  // 줄마다 탁자들, 탁자마다 자리 수. 번호는 왼쪽 위 탁자부터 차례로 1, 2, 3…  (주소에 &layout=6/5,3/5,3 으로 바꿀 수도 있다)
+  const LAYOUT = (P.get('layout') || '6/5,3/5,3').split('/').map((r) => r.split(',').map((n) => Math.max(1, parseInt(n, 10) || 1)));
+  const TABLES = (() => {
+    let n = 0, t = 0;
+    return LAYOUT.map((row) => row.map((size) => ({ label: String.fromCharCode(65 + t++), seats: Array.from({ length: size }, () => String(++n)) })));
+  })();
+  const SEATS = TABLES.flat().flatMap((t) => t.seats);
+
+  // 배치도를 그린다. decorate(자리번호, 버튼)으로 상태를 칠하고, onSeat(자리번호)는 눌렀을 때.
+  function drawMap(box, decorate, onSeat) {
+    box.textContent = '';
+    for (const row of TABLES) {
+      const r = document.createElement('div'); r.className = 'map-row';
+      for (const t of row) {
+        const tb = document.createElement('div'); tb.className = 'tbl';
+        const lb = document.createElement('div'); lb.className = 'tbl-label'; lb.textContent = t.label + ' 탁자';
+        const seats = document.createElement('div'); seats.className = 'seats';
+        for (const id of t.seats) {
+          const s = document.createElement('button'); s.type = 'button'; s.className = 'seat';
+          const num = document.createElement('b'); num.textContent = id;
+          const sub = document.createElement('span');
+          s.append(num, sub);
+          decorate(id, s, sub);
+          if (onSeat) s.addEventListener('click', () => onSeat(id));
+          seats.append(s);
+        }
+        tb.append(lb, seats);
+        r.append(tb);
+      }
+      box.append(r);
+    }
+  }
+
   // ---------- 노트북: 호출 버튼 ----------
   function boothMode() {
     const booth = P.get('booth') || '1';
@@ -358,8 +413,18 @@
     nameIn.addEventListener('change', () => { try { localStorage.setItem('boothCallStaff', nameIn.value.trim()); } catch (e) {} });
 
     const booths = new Map(); // 번호 → { name, state, since, note }
-    const order = (P.get('booths') || '').split(',').filter(Boolean);
+    const order = SEATS.concat((P.get('booths') || '').split(',').filter((b) => b && !SEATS.includes(b)));
     order.forEach((b) => booths.set(b, { name: b + '번 노트북', state: 'idle', since: 0, note: '' }));
+    const acking = new Set();
+    function ack(id) {
+      const b = booths.get(id);
+      if (!b || b.state !== 'calling' || acking.has(id)) return;
+      acking.add(id);
+      const who = nameIn.value.trim() || '부원';
+      publish({ title: '✅ ' + b.name + ' 응답', message: who + ' 가는 중', tags: ['ack', 'b-' + id], priority: 1 })
+        .catch((err) => alert(err.message))
+        .finally(() => acking.delete(id));
+    }
     let live = false;
 
     $('soundGate').addEventListener('click', () => {
@@ -369,33 +434,38 @@
     });
 
     function render() {
+      // 배치도: 부르는 자리는 빨갛게 깜빡이고, 누르면 "내가 갈게"
+      drawMap($('staffMap'), (id, el, sub) => {
+        const b = booths.get(id);
+        el.title = b.name;
+        if (b.state === 'calling') { el.classList.add('calling'); sub.textContent = ago(b.since); }
+        else if (b.state === 'coming') { el.classList.add('coming'); sub.textContent = b.note.replace(/ 가는 중$/, '') || '응답함'; }
+      }, ack);
+
+      // 아래 목록: 지금 부르는 / 응답한 자리만 (배치도에 없는 번호도 여기 나온다)
       const grid = $('grid');
       grid.textContent = '';
-      const list = [...booths.entries()].sort((a, b) =>
+      const all = [...booths.entries()];
+      const list = all.filter(([, b]) => b.state !== 'idle').sort((a, b) =>
         (b[1].state === 'calling') - (a[1].state === 'calling') || a[0].localeCompare(b[0], 'ko', { numeric: true }));
-      if (!list.length) grid.innerHTML = '<p class="muted">아직 호출이 없어요. 노트북에서 버튼을 누르면 여기에 떠요.</p>';
+      if (!list.length) grid.innerHTML = '<p class="muted">지금은 호출이 없어요. 노트북에서 버튼을 누르면 배치도의 그 자리가 빨갛게 깜빡여요.</p>';
       for (const [id, b] of list) {
         const card = document.createElement('div');
         card.className = 'booth-card ' + b.state;
-        const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = b.name;
+        const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = b.name + (b.name.startsWith(id + '번') ? '' : ' (' + id + '번 자리)');
         const st = document.createElement('div'); st.className = 'state';
         st.textContent = b.state === 'calling' ? '🔔 호출 중 · ' + ago(b.since)
           : b.state === 'coming' ? '✅ ' + b.note + ' · ' + ago(b.since) : '대기';
         card.append(nm, st);
         if (b.state === 'calling') {
-          const ack = document.createElement('button');
-          ack.className = 'ackBtn'; ack.type = 'button'; ack.textContent = '내가 갈게';
-          ack.addEventListener('click', () => {
-            const who = nameIn.value.trim() || '부원';
-            ack.disabled = true;
-            publish({ title: '✅ ' + b.name + ' 응답', message: who + ' 가는 중', tags: ['ack', 'b-' + id], priority: 1 })
-              .catch((err) => { ack.disabled = false; alert(err.message); });
-          });
-          card.append(ack);
+          const btn = document.createElement('button');
+          btn.className = 'ackBtn'; btn.type = 'button'; btn.textContent = '내가 갈게';
+          btn.addEventListener('click', () => { btn.disabled = true; ack(id); });
+          card.append(btn);
         }
         grid.append(card);
       }
-      const calling = list.filter(([, b]) => b.state === 'calling').length;
+      const calling = all.filter(([, b]) => b.state === 'calling').length;
       document.title = (calling ? '(' + calling + ') 🔔 ' : '') + '호출 현황판';
     }
 
@@ -450,7 +520,7 @@
     try { saved = JSON.parse(localStorage.getItem('boothCallSetup') || '{}'); } catch (e) {}
     // 공통 참가 주소(?t=채널)로 열었으면 그 채널을 그대로 쓴다.
     topicIn.value = topic || saved.topic || randomTopic();
-    namesIn.value = saved.names || '1번 노트북\n2번 노트북\n3번 노트북\n4번 노트북';
+    namesIn.value = saved.names || SEATS.map((n) => n + '번 노트북').join('\n');
 
     const base = location.href.split(/[?#]/)[0];
     function row(label, url) {
@@ -507,6 +577,10 @@
       location.href = staff ? base + '?t=' + t + '&staff=1'
         : base + '?t=' + t + '&booth=' + n + (nm ? '&name=' + encodeURIComponent(nm) : '');
     }
+    const drawPick = () => drawMap($('pickMap'), (id, el) => { if (id === String(joinNum.value)) el.classList.add('picked'); },
+      (id) => { joinNum.value = id; drawPick(); });
+    joinNum.addEventListener('input', drawPick);
+    drawPick();
     $('joinBooth').addEventListener('click', () => join(false));
     $('joinStaff').addEventListener('click', () => join(true));
     for (const el of [joinTopic, joinNum, joinName]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(false); });
