@@ -2,7 +2,7 @@
 
 동아리 부스에서 노트북마다 띄워 두고, 누르면 부원을 부르는 버튼. 게임이 무엇이든(Unity, 링크 배포 게임 등) 상관없이 옆에 같이 쓴다.
 
-- **주소:** https://vecar0.github.io/terabyte/
+- **주소:** https://terabyte2610.github.io/Boothcall/
 - 파일 하나(`index.html`)로 끝. 서버·빌드 없음. 알림 중계는 [ntfy.sh](https://ntfy.sh)(무료, 가입 없음).
 
 ## 쓰는 법
@@ -21,7 +21,7 @@
 
 ## 윈도우 프로그램 (주소 줄 없는 버전)
 
-웹의 작은 창은 크롬이 위에 사이트 주소 줄을 붙인다(보안상 없앨 수 없음). 주소 줄 없이 버튼만 띄우려면 **[BoothCall.exe](https://github.com/vecar0/terabyte/releases/download/app/BoothCall.exe)** (윈도우 10/11, 설치 없음).
+웹의 작은 창은 크롬이 위에 사이트 주소 줄을 붙인다(보안상 없앨 수 없음). 주소 줄 없이 버튼만 띄우려면 **[BoothCall.exe](https://github.com/terabyte2610/Boothcall/releases/download/app/BoothCall.exe)** (윈도우 10/11, 설치 없음).
 
 - 처음 실행하면 채널 이름을 묻는다 → 참가 링크를 통째로 붙여넣으면 채널·번호·이름이 채워진다.
 - 왼쪽 클릭 = 호출, 끌기 = 옮기기, 오른쪽 아래 모서리 끌기 = 크기, 오른쪽 클릭 = 메뉴(호출 취소 · 설정 · 크기 · 종료).

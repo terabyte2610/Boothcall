@@ -721,7 +721,7 @@ namespace BoothCall
 
                     // 링크 해석
                     var c = new Config();
-                    Check(c.ApplyLink("https://vecar0.github.io/terabyte/?t=booth-yjsj9s&booth=3&name=3%EB%B2%88+%EB%85%B8%ED%8A%B8%EB%B6%81") && c.Topic == "booth-yjsj9s" && c.Booth == "3" && c.Name == "3번 노트북", "참가 링크 해석");
+                    Check(c.ApplyLink("https://terabyte2610.github.io/Boothcall/?t=booth-yjsj9s&booth=3&name=3%EB%B2%88+%EB%85%B8%ED%8A%B8%EB%B6%81") && c.Topic == "booth-yjsj9s" && c.Booth == "3" && c.Name == "3번 노트북", "참가 링크 해석");
                     cts.Cancel();
 
                     // 그림: 상태·크기별 PNG

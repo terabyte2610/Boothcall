@@ -1,6 +1,6 @@
 # 윈도우 호출 프로그램(windows/)을 실제 윈도우에서 빌드하고 자체 시험을 돌린 뒤,
 # main이면 릴리스 "app"에 BoothCall.exe를 올린다.
-#   받는 주소: https://github.com/vecar0/terabyte/releases/download/app/BoothCall.exe
+#   받는 주소: https://github.com/terabyte2610/Boothcall/releases/download/app/BoothCall.exe
 name: Windows app
 
 on:
