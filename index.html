@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>부스 호출</title>
+<!--
+  동아리 부스 호출 버튼. 어떤 게임이든 옆에 띄워 두고 버튼을 누르면 부원에게 알림이 간다.
+  알림 중계는 ntfy.sh(무료, 가입 없음)를 쓴다. 서버도 빌드도 필요 없는 파일 하나.
+
+  주소로 화면이 바뀐다:
+    ./                       → 설정 화면 (채널 이름 정하고 노트북별 주소 만들기)
+    ./?t=채널&booth=1&name=… → 노트북용 호출 버튼
+    ./?t=채널&staff=1        → 부원용 호출 현황판
+  부원 휴대폰: ntfy 앱에서 같은 채널을 구독하면 알림이 오고, 알림의 [내가 갈게]로 응답할 수 있다.
+
+  메시지 구분은 ntfy 태그로 한다: call(호출) / ack(응답) / cancel(취소) + b-<노트북 번호>
+-->
+<style>
+  :root {
+    --bg: #f4f1ea; --card: #fffdf8; --ink: #1d1b16; --muted: #6b665b; --line: #e2dccf;
+    --call: #e5484d; --call-dark: #b8282d; --ok: #1f9d55; --wait: #f0a020;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15140f; --card: #211f19; --ink: #f2eee4; --muted: #a59f92; --line: #36332a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  }
+  button { font: inherit; cursor: pointer; }
+  input, textarea { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }
+  a { color: inherit; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); }
+  .btn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 8px 14px; }
+  .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .net { position: fixed; top: 10px; right: 12px; font-size: 13px; color: var(--muted); }
+  .net::before { content: "●"; margin-right: 5px; color: var(--wait); }
+  .net.on::before { color: var(--ok); }
+  .net.off::before { color: var(--call); }
+
+  /* ---------- 노트북: 호출 버튼 ---------- */
+  #booth { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 24px 16px; text-align: center; }
+  #booth .label { font-size: 20px; font-weight: 700; }
+  #callBtn {
+    width: min(64vw, 320px); aspect-ratio: 1; border-radius: 50%; border: 0;
+    background: radial-gradient(circle at 35% 30%, #ff7a7e, var(--call) 55%, var(--call-dark));
+    color: #fff; font-size: clamp(28px, 7vw, 46px); font-weight: 800; line-height: 1.25;
+    box-shadow: 0 10px 0 var(--call-dark), 0 18px 40px rgba(229, 72, 77, .35);
+    transition: transform .08s, box-shadow .08s;
+  }
+  #callBtn:active { transform: translateY(8px); box-shadow: 0 2px 0 var(--call-dark), 0 8px 20px rgba(229, 72, 77, .3); }
+  #callBtn small { display: block; font-size: .42em; font-weight: 600; opacity: .9; margin-top: 6px; }
+  #booth .status { font-size: 24px; font-weight: 700; min-height: 1.4em; }
+  #booth .status.wait { color: var(--wait); }
+  #booth .status.ok { color: var(--ok); }
+  #booth .status.err { color: var(--call); font-size: 18px; }
+  #booth.waiting #callBtn { animation: pulse 1.2s ease-in-out infinite; }
+  #booth.coming #callBtn { background: radial-gradient(circle at 35% 30%, #5fd68f, var(--ok) 55%, #137a40); box-shadow: 0 10px 0 #137a40; }
+  @keyframes pulse { 50% { transform: scale(.95); } }
+  #booth .tools { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+
+  /* 게임 위에 작게 띄운 창 */
+  body.mini #booth { gap: 10px; padding: 10px; }
+  body.mini #booth .label { font-size: 14px; }
+  body.mini #callBtn { width: 130px; font-size: 22px; box-shadow: 0 6px 0 var(--call-dark); }
+  body.mini #booth.coming #callBtn { box-shadow: 0 6px 0 #137a40; }
+  body.mini #callBtn small { display: none; }
+  body.mini #booth .status { font-size: 15px; }
+  body.mini #booth .tools .full-only, body.mini .net { display: none; }
+
+  /* ---------- 부원: 호출 현황판 ---------- */
+  #staff { max-width: 1100px; margin: 0 auto; padding: 40px 16px 40px; }
+  #staff header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  #staff h1 { font-size: 26px; margin: 0 auto 0 0; }
+  #soundGate { background: var(--call); color: #fff; border: 0; border-radius: 12px; padding: 14px; width: 100%; font-size: 18px; font-weight: 700; margin-bottom: 18px; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .booth-card { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 150px; }
+  .booth-card .name { font-size: 20px; font-weight: 800; }
+  .booth-card .state { font-size: 16px; color: var(--muted); }
+  .booth-card .ackBtn { margin-top: auto; border: 0; border-radius: 10px; padding: 12px; font-size: 17px; font-weight: 700; background: var(--ok); color: #fff; }
+  .booth-card.calling { border-color: var(--call); background: color-mix(in srgb, var(--call) 12%, var(--card)); animation: flash 1s steps(2) infinite; }
+  .booth-card.calling .state { color: var(--call); font-weight: 700; font-size: 18px; }
+  .booth-card.coming .state { color: var(--ok); font-weight: 600; }
+  @keyframes flash { 50% { border-color: var(--line); } }
+  #log { margin-top: 26px; font-size: 14px; }
+  #log h2 { font-size: 16px; }
+  #log ol { list-style: none; padding: 0; margin: 0; }
+  #log li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  #log time { color: var(--muted); margin-right: 8px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 설정 ---------- */
+  #setup { max-width: 760px; margin: 0 auto; padding: 32px 16px 60px; }
+  #setup h1 { font-size: 28px; margin: 0 0 6px; }
+  #setup h2 { font-size: 18px; margin: 30px 0 10px; }
+  #setup .row { display: flex; gap: 8px; }
+  #setup .row input { flex: 1; }
+  #setup ol.steps { padding-left: 20px; line-height: 1.7; }
+  .links { display: flex; flex-direction: column; gap: 8px; }
+  .link-row { display: flex; gap: 8px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .link-row b { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  code { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="net" class="net hidden">연결 중</div>
+
+<!-- 노트북용 -->
+<main id="booth" class="hidden">
+  <div class="label" id="boothLabel"></div>
+  <button id="callBtn" type="button">부원 호출<small>눌러서 부르기</small></button>
+  <div class="status" id="boothStatus" aria-live="polite"></div>
+  <div class="tools">
+    <button class="btn hidden" id="cancelBtn" type="button">호출 취소</button>
+    <button class="btn full-only" id="floatBtn" type="button">📌 게임 위에 작게 띄우기</button>
+  </div>
+</main>
+
+<!-- 부원용 -->
+<main id="staff" class="hidden">
+  <header>
+    <h1>📣 부스 호출 현황</h1>
+    <label class="muted">내 이름 <input id="staffName" placeholder="예: 민수" style="width:140px"></label>
+  </header>
+  <button id="soundGate" type="button">🔊 눌러서 알림 소리 켜기</button>
+  <div id="grid"></div>
+  <section id="log"><h2>기록</h2><ol id="logList"></ol></section>
+</main>
+
+<!-- 설정 -->
+<main id="setup" class="hidden">
+  <h1>🔔 부스 호출 버튼 만들기</h1>
+  <p class="muted">게임이 무엇이든 상관없어요. 노트북마다 호출 버튼 창을 하나씩 띄워 두면, 누르는 순간 부원 휴대폰과 현황판에 알림이 가요.</p>
+
+  <h2>1. 채널 이름</h2>
+  <p class="muted">우리 동아리만 쓰는 비밀 이름이에요. 이 이름을 아는 사람은 누구나 알림을 보낼 수 있으니 자동으로 만든 이름을 그대로 쓰는 걸 추천해요.</p>
+  <div class="row"><input id="topicIn" spellcheck="false"><button class="btn" id="regenBtn" type="button">새로 만들기</button></div>
+
+  <h2>2. 노트북 이름 (한 줄에 하나)</h2>
+  <textarea id="namesIn" rows="5" spellcheck="false"></textarea>
+
+  <h2>3. 노트북마다 열 주소</h2>
+  <p class="muted">각 노트북에서 자기 주소를 열어 두세요. 게임을 전체 화면으로 할 때는 그 창에서 <b>📌 게임 위에 작게 띄우기</b>를 누르면 호출 버튼이 항상 위에 떠 있어요.</p>
+  <div class="links" id="boothLinks"></div>
+
+  <h2>4. 부원이 알림 받기</h2>
+  <ol class="steps">
+    <li><b>휴대폰:</b> ntfy 앱 설치(안드로이드 Play 스토어 / 아이폰 App Store에서 “ntfy”) → <b>+</b> → 채널 이름 <code id="topicShow"></code> 입력 → 구독.<br>
+      <span class="muted">알림에 있는 <b>[내가 갈게]</b>를 누르면 노트북 화면에 “부원이 오고 있어요”가 떠요.</span></li>
+    <li><b>현황판(부스 노트북이나 태블릿):</b> 아래 주소를 열고 “알림 소리 켜기”를 누르세요.</li>
+  </ol>
+  <div class="links" id="staffLinks"></div>
+  <p><button class="btn primary" id="testBtn" type="button">시험 알림 보내기</button> <span id="testOut" class="muted"></span></p>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  const NTFY = 'https://ntfy.sh';
+  const P = new URLSearchParams(location.search);
+  const topic = (P.get('t') || '').trim();
+  const $ = (id) => document.getElementById(id);
+  const COMING_MS = 90 * 1000;  // "오고 있어요" 표시 유지 시간, 지나면 다시 호출 버튼으로
+  const COOLDOWN_MS = 5 * 1000; // 연타 방지
+
+  // ---------- ntfy ----------
+  async function publish(msg) {
+    const res = await fetch(NTFY + '/', { method: 'POST', body: JSON.stringify({ topic, ...msg }) });
+    if (!res.ok) throw new Error(res.status === 429 ? '알림을 너무 많이 보냈어요. 잠시 후 다시 눌러 주세요.' : '전송 실패 (' + res.status + ')');
+    return res.json();
+  }
+
+  // 지난 기록(since)부터 받아서 실시간으로 이어 받는다. 끊기면 EventSource가 다시 붙고, 겹치는 메시지는 id로 거른다.
+  function subscribe(since, onMsg) {
+    const net = $('net');
+    net.classList.remove('hidden');
+    const seen = new Set();
+    const es = new EventSource(NTFY + '/' + encodeURIComponent(topic) + '/sse?since=' + since);
+    es.onopen = () => { net.className = 'net on'; net.textContent = '연결됨'; };
+    es.onerror = () => { net.className = 'net off'; net.textContent = '연결 끊김 · 다시 연결 중'; };
+    es.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.event !== 'message' || seen.has(m.id)) return;
+      seen.add(m.id);
+      const tags = m.tags || [];
+      const kind = ['call', 'ack', 'cancel'].find((k) => tags.includes(k));
+      const bt = tags.find((t) => t.startsWith('b-'));
+      if (!kind || !bt) return;
+      onMsg({ kind, booth: bt.slice(2), title: m.title || '', message: m.message || '', time: m.time * 1000 });
+    };
+  }
+
+  function callMsg(booth, name) {
+    // 휴대폰 알림의 [내가 갈게] 버튼이 그대로 응답 메시지를 보낸다.
+    const ack = { topic, title: '✅ ' + name + ' 응답', message: '휴대폰에서 응답했어요', tags: ['ack', 'b-' + booth], priority: 1 };
+    return {
+      title: '🔔 ' + name + ' 호출',
+      message: name + '에서 부원을 부르고 있어요!',
+      tags: ['call', 'b-' + booth], priority: 5,
+      actions: [{ action: 'http', label: '내가 갈게', url: NTFY + '/', method: 'POST', body: JSON.stringify(ack), clear: true }],
+    };
+  }
+
+  // ---------- 소리 ----------
+  let audio = null;
+  function unlockAudio() {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
+  }
+  function beep(notes) {
+    if (!audio) return;
+    let t = audio.currentTime;
+    for (const [freq, dur] of notes) {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.type = 'triangle'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(audio.destination);
+      o.start(t); o.stop(t + dur + 0.02);
+      t += dur * 0.9;
+    }
+  }
+  const SOUND_CALL = [[880, 0.18], [660, 0.18], [880, 0.18], [660, 0.3]];
+  const SOUND_OK = [[523, 0.12], [784, 0.25]];
+
+  const hhmm = (ms) => new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  const ago = (ms) => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? s + '초 전' : Math.floor(s / 60) + '분 전'; };
+
+  // ---------- 노트북: 호출 버튼 ----------
+  function boothMode() {
+    const booth = P.get('booth') || '1';
+    const name = P.get('name') || booth + '번 노트북';
+    document.title = '호출 · ' + name;
+    $('booth').classList.remove('hidden');
+    $('boothLabel').textContent = name;
+    if (P.has('mini')) document.body.classList.add('mini');
+
+    const root = $('booth'), btn = $('callBtn'), status = $('boothStatus'), cancel = $('cancelBtn');
+    let state = 'idle', lastPress = 0, comingTimer = 0;
+
+    function show(s, text) {
+      state = s;
+      root.classList.toggle('waiting', s === 'waiting');
+      root.classList.toggle('coming', s === 'coming');
+      cancel.classList.toggle('hidden', s !== 'waiting');
+      btn.innerHTML = s === 'coming' ? '오는 중!<small>잠시만 기다려 주세요</small>'
+        : s === 'waiting' ? '호출함<small>한 번 더 눌러도 돼요</small>'
+        : '부원 호출<small>눌러서 부르기</small>';
+      status.className = 'status' + (s === 'waiting' ? ' wait' : s === 'coming' ? ' ok' : '');
+      status.textContent = text || '';
+      clearTimeout(comingTimer);
+      if (s === 'coming') comingTimer = setTimeout(() => show('idle'), COMING_MS);
+    }
+
+    btn.addEventListener('click', async () => {
+      unlockAudio();
+      if (Date.now() - lastPress < COOLDOWN_MS) return;
+      lastPress = Date.now();
+      show('waiting', '부원을 부르는 중…');
+      try {
+        await publish(callMsg(booth, name));
+        if (state === 'waiting') status.textContent = '호출했어요! 부원이 곧 와요';
+      } catch (err) {
+        lastPress = 0;
+        show('idle');
+        status.className = 'status err';
+        status.textContent = '⚠️ ' + (err.message.startsWith('전송') || err.message.startsWith('알림') ? err.message : '인터넷 연결을 확인해 주세요');
+      }
+    });
+
+    cancel.addEventListener('click', async () => {
+      show('idle', '호출을 취소했어요');
+      publish({ title: name + ' 호출 취소', message: '노트북에서 호출을 취소했어요', tags: ['cancel', 'b-' + booth], priority: 1 }).catch(() => {});
+    });
+
+    // 새로고침해도 진행 중인 호출 상태가 남도록 최근 10분 기록부터 받는다.
+    subscribe('10m', (m) => {
+      if (m.booth !== booth) return;
+      if (m.kind === 'call') {
+        if (Date.now() - m.time < 10 * 60 * 1000 && state !== 'waiting') show('waiting', '호출했어요! 부원이 곧 와요');
+      } else if (m.kind === 'ack') {
+        if (Date.now() - m.time > COMING_MS) { if (state !== 'idle') show('idle'); return; }
+        const who = m.message.startsWith('휴대폰') ? '' : m.message.replace(/ 가는 중$/, '');
+        show('coming', '부원이 오고 있어요!' + (who ? ' (' + who + ')' : ''));
+        beep(SOUND_OK);
+      } else if (m.kind === 'cancel') {
+        if (state !== 'idle') show('idle');
+      }
+    });
+
+    // 게임 위에 항상 떠 있는 작은 창: 크롬·엣지는 문서 PIP, 그 밖에는 작은 팝업.
+    // PIP 창은 이 탭과 연결돼 있어서 이 탭을 닫으면 같이 닫힌다(게임은 다른 창/탭에서).
+    $('floatBtn').addEventListener('click', async () => {
+      unlockAudio();
+      if ('documentPictureInPicture' in window) {
+        const w = await documentPictureInPicture.requestWindow({ width: 220, height: 250 });
+        for (const s of document.querySelectorAll('style')) w.document.head.append(s.cloneNode(true));
+        w.document.title = document.title;
+        w.document.body.classList.add('mini');
+        w.document.body.append(root);
+        w.addEventListener('pagehide', () => document.body.append(root));
+      } else {
+        window.open(location.href + '&mini=1', 'booth-call-' + booth, 'width=240,height=290');
+      }
+    });
+  }
+
+  // ---------- 부원: 호출 현황판 ----------
+  function staffMode() {
+    document.title = '호출 현황판';
+    $('staff').classList.remove('hidden');
+    const nameIn = $('staffName');
+    try { nameIn.value = localStorage.getItem('boothCallStaff') || ''; } catch (e) {}
+    nameIn.addEventListener('change', () => { try { localStorage.setItem('boothCallStaff', nameIn.value.trim()); } catch (e) {} });
+
+    const booths = new Map(); // 번호 → { name, state, since, note }
+    const order = (P.get('booths') || '').split(',').filter(Boolean);
+    order.forEach((b) => booths.set(b, { name: b + '번 노트북', state: 'idle', since: 0, note: '' }));
+    let live = false;
+
+    $('soundGate').addEventListener('click', () => {
+      unlockAudio(); beep(SOUND_OK);
+      $('soundGate').classList.add('hidden');
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    });
+
+    function render() {
+      const grid = $('grid');
+      grid.textContent = '';
+      const list = [...booths.entries()].sort((a, b) =>
+        (b[1].state === 'calling') - (a[1].state === 'calling') || a[0].localeCompare(b[0], 'ko', { numeric: true }));
+      if (!list.length) grid.innerHTML = '<p class="muted">아직 호출이 없어요. 노트북에서 버튼을 누르면 여기에 떠요.</p>';
+      for (const [id, b] of list) {
+        const card = document.createElement('div');
+        card.className = 'booth-card ' + b.state;
+        const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = b.name;
+        const st = document.createElement('div'); st.className = 'state';
+        st.textContent = b.state === 'calling' ? '🔔 호출 중 · ' + ago(b.since)
+          : b.state === 'coming' ? '✅ ' + b.note + ' · ' + ago(b.since) : '대기';
+        card.append(nm, st);
+        if (b.state === 'calling') {
+          const ack = document.createElement('button');
+          ack.className = 'ackBtn'; ack.type = 'button'; ack.textContent = '내가 갈게';
+          ack.addEventListener('click', () => {
+            const who = nameIn.value.trim() || '부원';
+            ack.disabled = true;
+            publish({ title: '✅ ' + b.name + ' 응답', message: who + ' 가는 중', tags: ['ack', 'b-' + id], priority: 1 })
+              .catch((err) => { ack.disabled = false; alert(err.message); });
+          });
+          card.append(ack);
+        }
+        grid.append(card);
+      }
+      const calling = list.filter(([, b]) => b.state === 'calling').length;
+      document.title = (calling ? '(' + calling + ') 🔔 ' : '') + '호출 현황판';
+    }
+
+    function log(m) {
+      const li = document.createElement('li');
+      const t = document.createElement('time'); t.textContent = hhmm(m.time);
+      li.append(t, m.title + (m.kind === 'ack' ? ' — ' + m.message : ''));
+      $('logList').prepend(li);
+    }
+
+    subscribe('3h', (m) => {
+      const b = booths.get(m.booth) || { name: m.booth + '번 노트북', state: 'idle', since: 0, note: '' };
+      booths.set(m.booth, b);
+      if (m.kind === 'call') {
+        b.name = m.title.replace(/^🔔 /, '').replace(/ 호출$/, '') || b.name;
+        if (b.state !== 'calling') b.since = m.time;
+        b.state = 'calling';
+        // 지난 기록을 다시 받는 동안에는 울리지 않는다.
+        if (live && Date.now() - m.time < 60 * 1000) {
+          beep(SOUND_CALL);
+          if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification(m.title, { body: m.message });
+        }
+      } else if (m.kind === 'ack') {
+        b.state = 'coming'; b.since = m.time;
+        b.note = m.message.startsWith('휴대폰') ? '휴대폰에서 응답' : m.message;
+      } else {
+        b.state = 'idle';
+      }
+      log(m);
+      render();
+    });
+    setTimeout(() => { live = true; }, 2500);
+
+    // 시간 표시 갱신, 처리 안 된 호출은 20초마다 다시 울림, 응답 후 오래되면 대기로
+    setInterval(() => {
+      for (const b of booths.values()) {
+        if (b.state === 'coming' && Date.now() - b.since > COMING_MS) b.state = 'idle';
+        if (b.state === 'calling' && Date.now() - b.since > 30 * 60 * 1000) b.state = 'idle';
+      }
+      render();
+    }, 5000);
+    setInterval(() => { if ([...booths.values()].some((b) => b.state === 'calling')) beep(SOUND_CALL); }, 20000);
+    render();
+  }
+
+  // ---------- 설정 ----------
+  function setupMode() {
+    $('setup').classList.remove('hidden');
+    const topicIn = $('topicIn'), namesIn = $('namesIn');
+    const randomTopic = () => 'booth-' + Array.from(crypto.getRandomValues(new Uint8Array(6)), (x) => 'abcdefghjkmnpqrstuvwxyz23456789'[x % 31]).join('');
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem('boothCallSetup') || '{}'); } catch (e) {}
+    topicIn.value = saved.topic || randomTopic();
+    namesIn.value = saved.names || '1번 노트북\n2번 노트북\n3번 노트북\n4번 노트북';
+
+    const base = location.href.split(/[?#]/)[0];
+    function row(label, url) {
+      const r = document.createElement('div'); r.className = 'link-row';
+      const b = document.createElement('b'); b.textContent = label; b.title = url;
+      const open = document.createElement('a'); open.className = 'btn'; open.href = url; open.target = '_blank'; open.textContent = '열기';
+      const copy = document.createElement('button'); copy.className = 'btn'; copy.type = 'button'; copy.textContent = '주소 복사';
+      copy.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(url); copy.textContent = '복사됨'; } catch (e) { prompt('주소를 복사하세요', url); }
+        setTimeout(() => { copy.textContent = '주소 복사'; }, 1500);
+      });
+      r.append(b, open, copy);
+      return r;
+    }
+    function update() {
+      const t = topicIn.value.trim().replace(/[^A-Za-z0-9_-]/g, '');
+      if (t !== topicIn.value) topicIn.value = t;
+      const names = namesIn.value.split('\n').map((s) => s.trim()).filter(Boolean);
+      try { localStorage.setItem('boothCallSetup', JSON.stringify({ topic: t, names: namesIn.value })); } catch (e) {}
+      $('topicShow').textContent = t;
+      const bl = $('boothLinks'); bl.textContent = '';
+      names.forEach((n, i) => bl.append(row(n, base + '?t=' + t + '&booth=' + (i + 1) + '&name=' + encodeURIComponent(n))));
+      const sl = $('staffLinks'); sl.textContent = '';
+      sl.append(row('📣 호출 현황판', base + '?t=' + t + '&staff=1&booths=' + names.map((_, i) => i + 1).join(',')));
+      sl.append(row('📱 휴대폰 웹으로 구독 (앱 대신)', NTFY + '/' + t));
+    }
+    topicIn.addEventListener('input', update);
+    namesIn.addEventListener('input', update);
+    $('regenBtn').addEventListener('click', () => { topicIn.value = randomTopic(); update(); });
+    $('testBtn').addEventListener('click', async () => {
+      const out = $('testOut');
+      out.textContent = '보내는 중…';
+      try {
+        const t = topicIn.value.trim();
+        const res = await fetch(NTFY + '/', { method: 'POST', body: JSON.stringify({ topic: t, title: '🔔 시험 알림', message: '알림이 잘 오고 있어요!', tags: ['tada'] }) });
+        if (!res.ok) throw new Error();
+        out.textContent = '보냈어요. 휴대폰에 알림이 왔는지 확인하세요.';
+      } catch (e) { out.textContent = '⚠️ 보내지 못했어요. 인터넷 연결을 확인해 주세요.'; }
+    });
+    update();
+  }
+
+  if (!topic) setupMode();
+  else if (P.has('staff')) staffMode();
+  else boothMode();
+})();
+</script>
+</body>
+</html>
