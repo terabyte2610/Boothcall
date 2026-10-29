@@ -1,0 +1,43 @@
+# 윈도우 호출 프로그램(windows/)을 실제 윈도우에서 빌드하고 자체 시험을 돌린 뒤,
+# main이면 릴리스 "app"에 BoothCall.exe를 올린다.
+#   받는 주소: https://github.com/vecar0/terabyte/releases/download/app/BoothCall.exe
+name: Windows app
+
+on:
+  push:
+    paths: ['windows/**', '.github/workflows/windows-app.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: dotnet build windows/BoothCall.csproj -c Release -o out
+      - name: Self-test (real ntfy round trip + previews)
+        shell: pwsh
+        run: |
+          $p = Start-Process out\BoothCall.exe -ArgumentList '--selftest', "$pwd\selftest" -Wait -PassThru
+          Get-Content selftest\selftest.log -Encoding utf8
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BoothCall
+          path: |
+            out/BoothCall.exe
+            selftest/
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view app *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create app --title "부스 호출 윈도우 프로그램" --notes "BoothCall.exe를 받아서 실행하세요. 처음 실행하면 채널 이름(또는 참가 링크)과 노트북 번호를 묻습니다."
+          }
+          gh release upload app out/BoothCall.exe (Get-ChildItem selftest/preview-*.png).FullName --clobber
