@@ -9,7 +9,8 @@
   알림 중계는 ntfy.sh(무료, 가입 없음)를 쓴다. 서버도 빌드도 필요 없는 파일 하나.
 
   주소로 화면이 바뀐다:
-    ./                       → 설정 화면 (채널 이름 정하고 노트북별 주소 만들기)
+    ./                       → 참가하기 + 설정 화면 (채널 이름 정하고 노트북별 주소 만들기)
+    ./?t=채널                → 같은 화면, 참가하기에 채널 이름이 채워진 채로 (공통 참가 주소)
     ./?t=채널&booth=1&name=… → 노트북용 호출 버튼
     ./?t=채널&staff=1        → 부원용 호출 현황판
   부원 휴대폰: ntfy 앱에서 같은 채널을 구독하면 알림이 오고, 알림의 [내가 갈게]로 응답할 수 있다.
@@ -98,6 +99,15 @@
   #setup h2 { font-size: 18px; margin: 30px 0 10px; }
   #setup .row { display: flex; gap: 8px; }
   #setup .row input { flex: 1; }
+  #setup .row + .row { margin-top: 10px; }
+  .join-card { background: var(--card); border: 2px solid var(--ink); border-radius: 16px; padding: 4px 18px 14px; margin-top: 20px; }
+  .join-card h2 { margin-top: 16px !important; }
+  .field { display: flex; flex-direction: column; gap: 4px; flex: 1; font-size: 14px; color: var(--muted); margin-top: 10px; }
+  .field.num { flex: 0 0 90px; }
+  .btn.big { flex: 1; padding: 12px; font-size: 16px; font-weight: 700; }
+  .setup-title { margin-top: 44px !important; }
+  .setup-title .muted { font-size: 14px; font-weight: 400; }
+  @media (max-width: 520px) { #setup .row { flex-wrap: wrap; } }
   #setup ol.steps { padding-left: 20px; line-height: 1.7; }
   .links { display: flex; flex-direction: column; gap: 8px; }
   .link-row { display: flex; gap: 8px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
@@ -132,8 +142,26 @@
 
 <!-- 설정 -->
 <main id="setup" class="hidden">
-  <h1>🔔 부스 호출 버튼 만들기</h1>
+  <h1>🔔 부스 호출 버튼</h1>
   <p class="muted">게임이 무엇이든 상관없어요. 노트북마다 호출 버튼 창을 하나씩 띄워 두면, 누르는 순간 부원 휴대폰과 현황판에 알림이 가요.</p>
+
+  <section class="join-card" id="joinCard">
+    <h2>이 노트북 참가하기</h2>
+    <p class="muted">대표 노트북에서 받은 <b>채널 이름</b>을 넣고 이 노트북의 번호를 고르세요.</p>
+    <label class="field">채널 이름 <input id="joinTopic" placeholder="예: booth-x7k2q9" spellcheck="false" autocapitalize="off"></label>
+    <div class="row">
+      <label class="field num">번호 <input id="joinNum" type="number" min="1" max="99" value="1"></label>
+      <label class="field">이름 (선택) <input id="joinName" placeholder="예: 민지의 리듬게임"></label>
+    </div>
+    <div class="row">
+      <button class="btn primary big" id="joinBooth" type="button">🔔 호출 버튼으로 참가</button>
+      <button class="btn big" id="joinStaff" type="button">📣 현황판으로 참가</button>
+    </div>
+    <p class="muted" id="joinMsg"></p>
+  </section>
+
+  <h2 class="setup-title">처음 설정하기 <span class="muted">(대표 노트북 한 대에서만)</span></h2>
+  <p class="muted">다른 노트북에서 여기를 새로 설정하면 채널이 달라져서 서로 호출이 안 가요. 채널 이름을 받았다면 위의 <b>참가하기</b>를 쓰세요.</p>
 
   <h2>1. 채널 이름</h2>
   <p class="muted">우리 동아리만 쓰는 비밀 이름이에요. 이 이름을 아는 사람은 누구나 알림을 보낼 수 있으니 자동으로 만든 이름을 그대로 쓰는 걸 추천해요.</p>
@@ -145,6 +173,9 @@
   <h2>3. 노트북마다 열 주소</h2>
   <p class="muted">각 노트북에서 자기 주소를 열어 두세요. 게임을 전체 화면으로 할 때는 그 창에서 <b>📌 게임 위에 작게 띄우기</b>를 누르면 호출 버튼이 항상 위에 떠 있어요.</p>
   <div class="links" id="boothLinks"></div>
+  <p class="muted">주소 대신 <b>공통 참가 주소</b> 하나만 나눠 줘도 돼요. 열면 채널 이름이 미리 채워져 있어서 번호만 고르면 돼요.</p>
+  <div class="links" id="joinLinks"></div>
+  <p><button class="btn" id="copyAllBtn" type="button">📋 주소 전부 복사 (카톡·구글 문서에 붙여넣기용)</button></p>
 
   <h2>4. 부원이 알림 받기</h2>
   <ol class="steps">
@@ -408,7 +439,8 @@
     const randomTopic = () => 'booth-' + Array.from(crypto.getRandomValues(new Uint8Array(6)), (x) => 'abcdefghjkmnpqrstuvwxyz23456789'[x % 31]).join('');
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem('boothCallSetup') || '{}'); } catch (e) {}
-    topicIn.value = saved.topic || randomTopic();
+    // 공통 참가 주소(?t=채널)로 열었으면 그 채널을 그대로 쓴다.
+    topicIn.value = topic || saved.topic || randomTopic();
     namesIn.value = saved.names || '1번 노트북\n2번 노트북\n3번 노트북\n4번 노트북';
 
     const base = location.href.split(/[?#]/)[0];
@@ -435,7 +467,41 @@
       const sl = $('staffLinks'); sl.textContent = '';
       sl.append(row('📣 호출 현황판', base + '?t=' + t + '&staff=1&booths=' + names.map((_, i) => i + 1).join(',')));
       sl.append(row('📱 휴대폰 웹으로 구독 (앱 대신)', NTFY + '/' + t));
+      const jl = $('joinLinks'); jl.textContent = '';
+      jl.append(row('🔗 공통 참가 주소', base + '?t=' + t));
+      allText = ['[부스 호출] 채널 이름: ' + t, '', '공통 참가 주소 (열고 번호만 고르기): ' + base + '?t=' + t, '']
+        .concat(names.map((n, i) => n + ': ' + base + '?t=' + t + '&booth=' + (i + 1) + '&name=' + encodeURIComponent(n)))
+        .concat(['', '📣 호출 현황판: ' + base + '?t=' + t + '&staff=1&booths=' + names.map((_, i) => i + 1).join(',')])
+        .join('\n');
     }
+    let allText = '';
+    $('copyAllBtn').addEventListener('click', async (e) => {
+      const btn = e.currentTarget, label = btn.textContent;
+      try { await navigator.clipboard.writeText(allText); btn.textContent = '✅ 복사됨 — 카톡이나 구글 문서에 붙여넣으세요'; } catch (err) { prompt('복사하세요', allText); }
+      setTimeout(() => { btn.textContent = label; }, 2500);
+    });
+
+    // 참가하기: 채널 이름 + 번호만으로 이 노트북의 호출 버튼(또는 현황판)으로 간다.
+    const joinTopic = $('joinTopic'), joinNum = $('joinNum'), joinName = $('joinName'), joinMsg = $('joinMsg');
+    let last = {};
+    try { last = JSON.parse(localStorage.getItem('boothCallJoin') || '{}'); } catch (e) {}
+    joinTopic.value = topic || last.topic || '';
+    joinNum.value = last.num || 1;
+    joinName.value = last.name || '';
+    if (!topic && last.topic) joinMsg.textContent = '지난번 참가 정보를 채워 뒀어요.';
+    function join(staff) {
+      const t = joinTopic.value.trim().replace(/[^A-Za-z0-9_-]/g, '');
+      if (!t) { joinMsg.textContent = '⚠️ 채널 이름을 입력해 주세요.'; joinTopic.focus(); return; }
+      const n = Math.min(99, Math.max(1, parseInt(joinNum.value, 10) || 1));
+      const nm = joinName.value.trim();
+      try { localStorage.setItem('boothCallJoin', JSON.stringify({ topic: t, num: n, name: nm })); } catch (e) {}
+      location.href = staff ? base + '?t=' + t + '&staff=1'
+        : base + '?t=' + t + '&booth=' + n + (nm ? '&name=' + encodeURIComponent(nm) : '');
+    }
+    $('joinBooth').addEventListener('click', () => join(false));
+    $('joinStaff').addEventListener('click', () => join(true));
+    for (const el of [joinTopic, joinNum, joinName]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(false); });
+    if (topic) joinNum.select();
     topicIn.addEventListener('input', update);
     namesIn.addEventListener('input', update);
     $('regenBtn').addEventListener('click', () => { topicIn.value = randomTopic(); update(); });
@@ -452,9 +518,9 @@
     update();
   }
 
-  if (!topic) setupMode();
-  else if (P.has('staff')) staffMode();
-  else boothMode();
+  if (P.has('staff') && topic) staffMode();
+  else if (P.has('booth') && topic) boothMode();
+  else setupMode();
 })();
 </script>
 </body>
