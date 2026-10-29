@@ -223,8 +223,9 @@
   <div class="links" id="boothLinks"></div>
   <p class="muted">주소 대신 <b>공통 참가 주소</b> 하나만 나눠 줘도 돼요. 열면 채널 이름이 미리 채워져 있어서 번호만 고르면 돼요.</p>
   <div class="links" id="joinLinks"></div>
-  <p class="muted">작은 창 위의 주소 줄이 거슬리면 <b><a href="https://github.com/terabyte2610/Boothcall/releases/download/app/BoothCall.exe">윈도우 프로그램(BoothCall.exe)</a></b>을 쓰세요. 주소 줄 없이 버튼만 떠 있고, 눌러도 게임 창 포커스를 뺏지 않아요. 처음 실행할 때 위 참가 주소를 붙여넣으면 끝이에요.</p>
-  <p><button class="btn" id="copyAllBtn" type="button">📋 주소 전부 복사 (카톡·구글 문서에 붙여넣기용)</button></p>
+  <p class="muted">작은 창 위의 주소 줄이 거슬리면 <b><a id="exeLink" href="https://github.com/terabyte2610/Boothcall/releases/download/app/BoothCall.exe">윈도우 프로그램(BoothCall.exe)</a></b>을 쓰세요. 주소 줄 없이 버튼만 떠 있고, 눌러도 게임 창 포커스를 뺏지 않아요. 처음 실행할 때 위 참가 주소를 붙여넣으면 끝이에요.</p>
+  <p><button class="btn" id="copyAllBtn" type="button">📋 주소 전부 복사 (카톡·구글 문서에 붙여넣기용)</button>
+     <button class="btn" id="fileBtn" type="button">💾 링크 파일 받기 (.txt, USB용)</button></p>
 
   <h2>4. 부원이 알림 받기</h2>
   <ol class="steps">
@@ -614,7 +615,30 @@
         .concat(names.map((n, i) => n + ': ' + base + '?t=' + t + '&booth=' + (i + 1) + '&name=' + encodeURIComponent(n) + kq))
         .concat(['', '📣 호출 현황판: ' + base + '?t=' + t + '&staff=1' + kq])
         .join('\n');
+
+      // USB에 담을 링크 파일: 탁자별로 묶은 자리 링크 + 현황판 + 휴대폰·윈도우 프로그램 안내
+      const seatLink = (id) => { const nm = names[id - 1]; return base + '?t=' + t + '&booth=' + id + (nm && nm !== id + '번 노트북' ? '&name=' + encodeURIComponent(nm) : '') + kq; };
+      fileText = ['[부스 호출 버튼 링크]', '', '채널 이름: ' + t + '   (모든 노트북·휴대폰이 같아야 해요)', '크롬이나 엣지로 여세요.']
+        .concat(tk ? ['토큰이 들어 있는 링크예요. 동아리 안에서만 쓰세요.'] : [])
+        .concat(['', '■ 공통 참가 링크 (열고 배치도에서 자리만 누르면 돼요)', base + '?t=' + t + kq, '', '■ 자리별 링크'])
+        .concat(TABLES.flat().flatMap((tb) => ['  [' + tb.label + ' 탁자] ' + tb.seats.join(' ')]
+          .concat(tb.seats.map((id) => '  ' + id.padStart(2) + '번: ' + seatLink(Number(id))))))
+        .concat(['', '  열린 뒤: [게임 위에 작게 띄우기] → 작은 버튼을 구석에 두기 → 게임 실행',
+          '  호출 페이지 탭은 닫지 마세요. 버튼 밑 "클리어 조건 적기"를 눌러 조건을 적을 수 있어요.', '',
+          '■ 부원용 현황판 (자리 배치도)', base + '?t=' + t + '&staff=1' + kq, '  연 다음 [알림 소리 켜기]를 꼭 한 번 누르세요.', '',
+          '■ 휴대폰으로 알림 받기', '  ntfy 앱 설치 → + → 채널 이름 ' + t + ' 입력 → 구독', '',
+          '■ 주소 줄 없는 윈도우 프로그램 (선택)', $('exeLink').href,
+          '  처음 실행 때 "PC 보호" 창이 뜨면 [추가 정보] → [실행]', '  설정 창에 위 자리별 링크를 통째로 붙여넣으면 끝'])
+        .join('\r\n') + '\r\n';
     }
+    let fileText = '';
+    $('fileBtn').addEventListener('click', () => {
+      // 메모장에서 한글이 안 깨지게 UTF-8 BOM을 붙인다.
+      const url = URL.createObjectURL(new Blob(['\ufeff' + fileText], { type: 'text/plain;charset=utf-8' }));
+      const a = document.createElement('a'); a.href = url; a.download = 'boothcall-links.txt';
+      document.body.append(a); a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 2000);
+    });
     let allText = '';
     $('copyAllBtn').addEventListener('click', async (e) => {
       const btn = e.currentTarget, label = btn.textContent;
