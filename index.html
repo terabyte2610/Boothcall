@@ -192,6 +192,9 @@
     <div class="row">
       <label class="field">클리어 조건 (선택, 호출 버튼 밑에 작게 보여요) <input id="joinStamp" maxlength="60" placeholder="예: 5000점 이상"></label>
     </div>
+    <div class="row">
+      <label class="field">ntfy 토큰 (유료 요금제를 쓸 때만, 받은 링크로 열었으면 이미 채워져 있어요) <input id="joinToken" spellcheck="false" autocomplete="off" placeholder="tk_…"></label>
+    </div>
     <p class="muted" style="margin:12px 0 6px">아래 배치도에서 이 노트북 자리를 눌러도 돼요.</p>
     <div class="map pick" id="pickMap"></div>
     <div class="row">
@@ -207,6 +210,10 @@
   <h2>1. 채널 이름</h2>
   <p class="muted">우리 동아리만 쓰는 비밀 이름이에요. 이 이름을 아는 사람은 누구나 알림을 보낼 수 있으니 자동으로 만든 이름을 그대로 쓰는 걸 추천해요.</p>
   <div class="row"><input id="topicIn" spellcheck="false"><button class="btn" id="regenBtn" type="button">새로 만들기</button></div>
+
+  <h2>1-1. ntfy 토큰 <span class="muted" style="font-size:14px;font-weight:400">(유료 요금제를 쓸 때만)</span></h2>
+  <p class="muted">ntfy.sh 계정의 <b>Account → Access tokens</b>에서 만든 토큰(<code>tk_</code>로 시작)을 넣으면 아래 링크들에 함께 들어가요. 그러면 하루 사용량이 노트북들의 인터넷 주소가 아니라 이 계정 기준으로 계산돼요. <b>토큰이 든 링크는 동아리 안에서만</b> 나눠 주세요.</p>
+  <input id="tokenIn" spellcheck="false" autocomplete="off" placeholder="tk_로 시작하는 토큰 (없으면 비워 두기)">
 
   <h2>2. 노트북 이름 (한 줄에 하나)</h2>
   <textarea id="namesIn" rows="5" spellcheck="false"></textarea>
@@ -240,9 +247,20 @@
   const COOLDOWN_MS = 5 * 1000; // 연타 방지
 
   // ---------- ntfy ----------
+  // 유료 요금제 토큰(선택). 링크의 &k=로 받으면 이 노트북에 기억한다. 토큰은 코드·저장소에 넣지 않는다.
+  // 토큰이 있으면 하루 사용량이 인터넷 주소(IP)가 아니라 그 ntfy 계정 기준으로 계산된다.
+  let TOKEN = (P.get('k') || '').trim();
+  try { if (TOKEN) localStorage.setItem('boothCallToken', TOKEN); else TOKEN = (localStorage.getItem('boothCallToken') || '').trim(); } catch (e) {}
+  // 다른 사이트에서 Authorization 헤더를 보내는 대신 ntfy의 ?auth= (base64url("Bearer 토큰"))를 쓴다.
+  const authQuery = (tk) => tk ? '?auth=' + btoa('Bearer ' + tk).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') : '';
+  const ntfyPost = (body, tk = TOKEN) => fetch(NTFY + '/' + authQuery(tk), { method: 'POST', body: JSON.stringify(body) });
+  const failMsg = (status) => status === 429 ? '알림을 너무 많이 보냈어요(하루 사용량 초과일 수 있어요). 잠시 후 다시 눌러 주세요.'
+    : status === 401 || status === 403 ? 'ntfy 토큰이 맞지 않아요. 설정 화면에서 토큰을 확인해 주세요.'
+    : '전송 실패 (' + status + ')';
+
   async function publish(msg) {
-    const res = await fetch(NTFY + '/', { method: 'POST', body: JSON.stringify({ topic, ...msg }) });
-    if (!res.ok) throw new Error(res.status === 429 ? '알림을 너무 많이 보냈어요. 잠시 후 다시 눌러 주세요.' : '전송 실패 (' + res.status + ')');
+    const res = await ntfyPost({ topic, ...msg });
+    if (!res.ok) { const err = new Error(failMsg(res.status)); err.known = true; throw err; }
     return res.json();
   }
 
@@ -402,7 +420,7 @@
         lastPress = 0;
         show('idle');
         status.className = 'status err';
-        status.textContent = '⚠️ ' + (err.message.startsWith('전송') || err.message.startsWith('알림') ? err.message : '인터넷 연결을 확인해 주세요');
+        status.textContent = '⚠️ ' + (err.known ? err.message : '인터넷 연결을 확인해 주세요');
       }
     });
 
@@ -556,13 +574,14 @@
   // ---------- 설정 ----------
   function setupMode() {
     $('setup').classList.remove('hidden');
-    const topicIn = $('topicIn'), namesIn = $('namesIn');
+    const topicIn = $('topicIn'), namesIn = $('namesIn'), tokenIn = $('tokenIn');
     const randomTopic = () => 'booth-' + Array.from(crypto.getRandomValues(new Uint8Array(6)), (x) => 'abcdefghjkmnpqrstuvwxyz23456789'[x % 31]).join('');
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem('boothCallSetup') || '{}'); } catch (e) {}
     // 공통 참가 주소(?t=채널)로 열었으면 그 채널을 그대로 쓴다.
     topicIn.value = topic || saved.topic || randomTopic();
     namesIn.value = saved.names || SEATS.map((n) => n + '번 노트북').join('\n');
+    tokenIn.value = P.get('k') || saved.token || TOKEN;
 
     const base = location.href.split(/[?#]/)[0];
     function row(label, url) {
@@ -581,18 +600,19 @@
       const t = topicIn.value.trim().replace(/[^A-Za-z0-9_-]/g, '');
       if (t !== topicIn.value) topicIn.value = t;
       const names = namesIn.value.split('\n').map((s) => s.trim()).filter(Boolean);
-      try { localStorage.setItem('boothCallSetup', JSON.stringify({ topic: t, names: namesIn.value })); } catch (e) {}
+      const tk = tokenIn.value.trim(), kq = tk ? '&k=' + encodeURIComponent(tk) : '';
+      try { localStorage.setItem('boothCallSetup', JSON.stringify({ topic: t, names: namesIn.value, token: tk })); } catch (e) {}
       $('topicShow').textContent = t;
       const bl = $('boothLinks'); bl.textContent = '';
-      names.forEach((n, i) => bl.append(row(n, base + '?t=' + t + '&booth=' + (i + 1) + '&name=' + encodeURIComponent(n))));
+      names.forEach((n, i) => bl.append(row(n, base + '?t=' + t + '&booth=' + (i + 1) + '&name=' + encodeURIComponent(n) + kq)));
       const sl = $('staffLinks'); sl.textContent = '';
-      sl.append(row('📣 호출 현황판', base + '?t=' + t + '&staff=1&booths=' + names.map((_, i) => i + 1).join(',')));
+      sl.append(row('📣 호출 현황판', base + '?t=' + t + '&staff=1' + kq));
       sl.append(row('📱 휴대폰 웹으로 구독 (앱 대신)', NTFY + '/' + t));
       const jl = $('joinLinks'); jl.textContent = '';
-      jl.append(row('🔗 공통 참가 주소', base + '?t=' + t));
-      allText = ['[부스 호출] 채널 이름: ' + t, '', '공통 참가 주소 (열고 번호만 고르기): ' + base + '?t=' + t, '']
-        .concat(names.map((n, i) => n + ': ' + base + '?t=' + t + '&booth=' + (i + 1) + '&name=' + encodeURIComponent(n)))
-        .concat(['', '📣 호출 현황판: ' + base + '?t=' + t + '&staff=1&booths=' + names.map((_, i) => i + 1).join(',')])
+      jl.append(row('🔗 공통 참가 주소', base + '?t=' + t + kq));
+      allText = ['[부스 호출] 채널 이름: ' + t, '', '공통 참가 주소 (열고 번호만 고르기): ' + base + '?t=' + t + kq, '']
+        .concat(names.map((n, i) => n + ': ' + base + '?t=' + t + '&booth=' + (i + 1) + '&name=' + encodeURIComponent(n) + kq))
+        .concat(['', '📣 호출 현황판: ' + base + '?t=' + t + '&staff=1' + kq])
         .join('\n');
     }
     let allText = '';
@@ -603,22 +623,24 @@
     });
 
     // 참가하기: 채널 이름 + 번호만으로 이 노트북의 호출 버튼(또는 현황판)으로 간다.
-    const joinTopic = $('joinTopic'), joinNum = $('joinNum'), joinName = $('joinName'), joinStamp = $('joinStamp'), joinMsg = $('joinMsg');
+    const joinTopic = $('joinTopic'), joinNum = $('joinNum'), joinName = $('joinName'), joinStamp = $('joinStamp'), joinToken = $('joinToken'), joinMsg = $('joinMsg');
     let last = {};
     try { last = JSON.parse(localStorage.getItem('boothCallJoin') || '{}'); } catch (e) {}
     joinTopic.value = topic || last.topic || '';
     joinNum.value = last.num || 1;
     joinName.value = last.name || '';
     joinStamp.value = last.stamp || '';
+    joinToken.value = TOKEN;
     if (!topic && last.topic) joinMsg.textContent = '지난번 참가 정보를 채워 뒀어요.';
     function join(staff) {
       const t = joinTopic.value.trim().replace(/[^A-Za-z0-9_-]/g, '');
       if (!t) { joinMsg.textContent = '⚠️ 채널 이름을 입력해 주세요.'; joinTopic.focus(); return; }
       const n = Math.min(99, Math.max(1, parseInt(joinNum.value, 10) || 1));
-      const nm = joinName.value.trim(), sp = joinStamp.value.trim();
+      const nm = joinName.value.trim(), sp = joinStamp.value.trim(), tk = joinToken.value.trim(), kq = tk ? '&k=' + encodeURIComponent(tk) : '';
+      try { if (!tk) localStorage.removeItem('boothCallToken'); } catch (e) {}
       try { localStorage.setItem('boothCallJoin', JSON.stringify({ topic: t, num: n, name: nm, stamp: sp })); } catch (e) {}
-      location.href = staff ? base + '?t=' + t + '&staff=1'
-        : base + '?t=' + t + '&booth=' + n + (nm ? '&name=' + encodeURIComponent(nm) : '') + (sp ? '&stamp=' + encodeURIComponent(sp) : '');
+      location.href = staff ? base + '?t=' + t + '&staff=1' + kq
+        : base + '?t=' + t + '&booth=' + n + (nm ? '&name=' + encodeURIComponent(nm) : '') + (sp ? '&stamp=' + encodeURIComponent(sp) : '') + kq;
     }
     const drawPick = () => drawMap($('pickMap'), (id, el) => { if (id === String(joinNum.value)) el.classList.add('picked'); },
       (id) => { joinNum.value = id; drawPick(); });
@@ -626,19 +648,19 @@
     drawPick();
     $('joinBooth').addEventListener('click', () => join(false));
     $('joinStaff').addEventListener('click', () => join(true));
-    for (const el of [joinTopic, joinNum, joinName, joinStamp]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(false); });
+    for (const el of [joinTopic, joinNum, joinName, joinStamp, joinToken]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(false); });
     if (topic) joinNum.select();
     topicIn.addEventListener('input', update);
     namesIn.addEventListener('input', update);
+    tokenIn.addEventListener('input', update);
     $('regenBtn').addEventListener('click', () => { topicIn.value = randomTopic(); update(); });
     $('testBtn').addEventListener('click', async () => {
       const out = $('testOut');
       out.textContent = '보내는 중…';
       try {
         const t = topicIn.value.trim();
-        const res = await fetch(NTFY + '/', { method: 'POST', body: JSON.stringify({ topic: t, title: '🔔 시험 알림', message: '알림이 잘 오고 있어요!', tags: ['tada'] }) });
-        if (!res.ok) throw new Error();
-        out.textContent = '보냈어요. 휴대폰에 알림이 왔는지 확인하세요.';
+        const res = await ntfyPost({ topic: t, title: '🔔 시험 알림', message: '알림이 잘 오고 있어요!', tags: ['tada'] }, tokenIn.value.trim());
+        out.textContent = res.ok ? '보냈어요. 휴대폰에 알림이 왔는지 확인하세요.' + (tokenIn.value.trim() ? ' (토큰 확인됨)' : '') : '⚠️ ' + failMsg(res.status);
       } catch (e) { out.textContent = '⚠️ 보내지 못했어요. 인터넷 연결을 확인해 주세요.'; }
     });
     update();

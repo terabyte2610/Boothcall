@@ -84,7 +84,25 @@ namespace BoothCall
             using (req.GetResponse()) { }
         }
 
-        public static void Publish(Pub p) { Post(Base, ToJson(p)); }
+        // 유료 요금제 토큰(선택). 있으면 ?auth=로 보내서 하루 사용량을 IP가 아니라 그 계정 기준으로 계산하게 한다.
+        public static string Token = "";
+
+        public static string AuthQuery(string tk)
+        {
+            if (string.IsNullOrEmpty(tk)) return "";
+            return "?auth=" + Convert.ToBase64String(Encoding.UTF8.GetBytes("Bearer " + tk)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+
+        public static void Publish(Pub p) { Post(Base + AuthQuery(Token), ToJson(p)); }
+
+        public static string FailText(Exception ex)
+        {
+            var res = (ex as WebException)?.Response as HttpWebResponse;
+            int code = res == null ? 0 : (int)res.StatusCode;
+            if (code == 401 || code == 403) return "ntfy 토큰이 맞지 않아요 · 설정에서 확인";
+            if (code == 429) return "하루 사용량 초과 · 잠시 후 다시";
+            return "전송 실패 · 인터넷 확인 후 다시 눌러 주세요";
+        }
 
         static Msg Parse(string line)
         {
@@ -142,6 +160,7 @@ namespace BoothCall
         public string Who = "";
         public DateTime ComingUntil;
         public bool Failed;
+        public string FailText = "";
         public event Action Changed;
 
         public Core(string topic, string booth, string name)
@@ -225,7 +244,7 @@ namespace BoothCall
     // ---------- 설정 파일 ----------
     class Config
     {
-        public string Topic = "", Booth = "1", Name = "";
+        public string Topic = "", Booth = "1", Name = "", Token = "";
         public int X = int.MinValue, Y = int.MinValue, W = 0, H = 0;
 
         static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BoothCall"); } }
@@ -250,6 +269,7 @@ namespace BoothCall
                         case "topic": c.Topic = v; break;
                         case "booth": c.Booth = v; break;
                         case "name": c.Name = v; break;
+                        case "token": c.Token = v; break;
                         case "x": if (int.TryParse(v, out n)) c.X = n; break;
                         case "y": if (int.TryParse(v, out n)) c.Y = n; break;
                         case "w": if (int.TryParse(v, out n)) c.W = n; break;
@@ -266,7 +286,7 @@ namespace BoothCall
             try
             {
                 Directory.CreateDirectory(Dir);
-                File.WriteAllLines(FilePath, new[] { "topic=" + Topic, "booth=" + Booth, "name=" + Name, "x=" + X, "y=" + Y, "w=" + W, "h=" + H }, Encoding.UTF8);
+                File.WriteAllLines(FilePath, new[] { "topic=" + Topic, "booth=" + Booth, "name=" + Name, "token=" + Token, "x=" + X, "y=" + Y, "w=" + W, "h=" + H }, Encoding.UTF8);
             }
             catch { }
         }
@@ -286,6 +306,7 @@ namespace BoothCall
                 if (k == "t") { Topic = v; any = true; }
                 else if (k == "booth") Booth = v;
                 else if (k == "name") Name = v;
+                else if (k == "k") Token = v;
             }
             return any;
         }
@@ -336,7 +357,7 @@ namespace BoothCall
             using (var p = Rounded(top, radius)) using (var b = new SolidBrush(fill)) g.FillPath(b, p);
 
             string main = s == State.Coming ? "오는 중!" : s == State.Waiting ? "호출함" : "부원 호출";
-            string sub = core.Failed ? "전송 실패 · 인터넷 확인 후 다시 눌러 주세요"
+            string sub = core.Failed ? (core.FailText.Length > 0 ? core.FailText : "전송 실패 · 인터넷 확인 후 다시 눌러 주세요")
                 : s == State.Coming ? (core.Who.Length > 0 ? core.Who + " 오고 있어요" : "부원이 오고 있어요")
                 : s == State.Waiting ? "부원이 곧 와요"
                 : core.Name;
@@ -443,6 +464,7 @@ namespace BoothCall
         void StartCore()
         {
             if (listenCts != null) listenCts.Cancel();
+            Ntfy.Token = cfg.Token;
             core = new Core(cfg.Topic, cfg.Booth, cfg.DisplayName);
             core.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)UpdateView); };
             listenCts = new CancellationTokenSource();
@@ -486,11 +508,11 @@ namespace BoothCall
 
         void OpenSettings()
         {
-            var copy = new Config { Topic = cfg.Topic, Booth = cfg.Booth, Name = cfg.Name };
+            var copy = new Config { Topic = cfg.Topic, Booth = cfg.Booth, Name = cfg.Name, Token = cfg.Token };
             using (var dlg = new SettingsForm(copy))
             {
                 if (dlg.ShowDialog() != DialogResult.OK) return;
-                cfg.Topic = copy.Topic; cfg.Booth = copy.Booth; cfg.Name = copy.Name;
+                cfg.Topic = copy.Topic; cfg.Booth = copy.Booth; cfg.Name = copy.Name; cfg.Token = copy.Token;
                 cfg.Save();
                 StartCore();
             }
@@ -506,10 +528,11 @@ namespace BoothCall
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try { Ntfy.Publish(p); }
-                catch
+                catch (Exception ex)
                 {
+                    string why = Ntfy.FailText(ex);
                     if (!IsHandleCreated) return;
-                    BeginInvoke((Action)(() => { lastPress = DateTime.MinValue; c.Set(State.Idle); c.Failed = true; Invalidate(); }));
+                    BeginInvoke((Action)(() => { lastPress = DateTime.MinValue; c.Set(State.Idle); c.Failed = true; c.FailText = why; Invalidate(); }));
                 }
             });
         }
@@ -592,17 +615,19 @@ namespace BoothCall
             var booth = new NumericUpDown { Minimum = 1, Maximum = 99, Width = 80 };
             int bn; booth.Value = int.TryParse(cfg.Booth, out bn) && bn >= 1 && bn <= 99 ? bn : 1;
             var name = new TextBox { Text = cfg.Name, Width = 380 };
+            var token = new TextBox { Text = cfg.Token, Width = 380 };
             var err = new Label { AutoSize = true, ForeColor = Color.Firebrick, Margin = new Padding(0, 8, 0, 0) };
 
             // 링크 텍스트 파일의 주소를 통째로 붙여넣으면 채널·번호·이름을 채운다.
             topic.TextChanged += (s, e) =>
             {
                 if (!topic.Text.Contains("?")) return;
-                var tmp = new Config { Booth = booth.Value.ToString(), Name = name.Text };
+                var tmp = new Config { Booth = booth.Value.ToString(), Name = name.Text, Token = token.Text };
                 if (!tmp.ApplyLink(topic.Text)) return;
                 topic.Text = tmp.Topic;
                 int n; if (int.TryParse(tmp.Booth, out n) && n >= 1 && n <= 99) booth.Value = n;
                 name.Text = tmp.Name;
+                token.Text = tmp.Token;
             };
 
             var ok = new Button { Text = "확인", AutoSize = true, DialogResult = DialogResult.None };
@@ -611,7 +636,7 @@ namespace BoothCall
             {
                 var tmp = new Config { Topic = topic.Text.Trim() };
                 if (!tmp.Valid) { err.Text = "채널 이름을 확인해 주세요 (예: booth-x7k2q9)"; topic.Focus(); return; }
-                cfg.Topic = tmp.Topic; cfg.Booth = booth.Value.ToString(); cfg.Name = name.Text.Trim();
+                cfg.Topic = tmp.Topic; cfg.Booth = booth.Value.ToString(); cfg.Name = name.Text.Trim(); cfg.Token = token.Text.Trim();
                 DialogResult = DialogResult.OK;
             };
             AcceptButton = ok; CancelButton = cancel;
@@ -625,6 +650,8 @@ namespace BoothCall
             t.Controls.Add(booth);
             t.Controls.Add(label("이름 (선택, 비우면 \"N번 노트북\")"));
             t.Controls.Add(name);
+            t.Controls.Add(label("ntfy 토큰 (유료 요금제를 쓸 때만, 링크를 붙여넣으면 자동으로 채워져요)"));
+            t.Controls.Add(token);
             t.Controls.Add(err);
             t.Controls.Add(buttons);
             Controls.Add(t);
@@ -722,6 +749,17 @@ namespace BoothCall
                     // 링크 해석
                     var c = new Config();
                     Check(c.ApplyLink("https://terabyte2610.github.io/Boothcall/?t=booth-yjsj9s&booth=3&name=3%EB%B2%88+%EB%85%B8%ED%8A%B8%EB%B6%81") && c.Topic == "booth-yjsj9s" && c.Booth == "3" && c.Name == "3번 노트북", "참가 링크 해석");
+                    var ck = new Config();
+                    Check(ck.ApplyLink("https://terabyte2610.github.io/Boothcall/?t=booth-yjsj9s&booth=3&k=tk_abc") && ck.Token == "tk_abc", "링크의 토큰 해석");
+                    string aq = Ntfy.AuthQuery("tk_a+b/c");
+                    string b64 = aq.Substring(6).Replace('-', '+').Replace('_', '/');
+                    b64 += new string('=', (4 - b64.Length % 4) % 4);
+                    Check(Encoding.UTF8.GetString(Convert.FromBase64String(b64)) == "Bearer tk_a+b/c" && Ntfy.AuthQuery("") == "", "토큰 auth 인코딩");
+                    // 틀린 토큰은 ntfy가 401로 거절 → 안내 문구
+                    string why = "";
+                    try { Ntfy.Post(Ntfy.Base + Ntfy.AuthQuery("tk_wrongwrongwrongwrongwrong1"), Ntfy.ToJson(core.CancelPub())); }
+                    catch (Exception ex) { why = Ntfy.FailText(ex); }
+                    Check(why.StartsWith("ntfy 토큰이 맞지 않아요"), "틀린 토큰 → 안내 (" + why + ")");
                     cts.Cancel();
 
                     // 그림: 상태·크기별 PNG
